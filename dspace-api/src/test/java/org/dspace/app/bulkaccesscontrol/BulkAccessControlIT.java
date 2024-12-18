@@ -42,6 +42,8 @@ import org.apache.commons.io.IOUtils;
 import org.apache.commons.io.file.PathUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.dspace.AbstractIntegrationTestWithDatabase;
+import org.dspace.app.bulkaccesscontrol.model.BulkAccessConditionConfiguration;
+import org.dspace.app.bulkaccesscontrol.service.BulkAccessConditionConfigurationService;
 import org.dspace.app.launcher.ScriptLauncher;
 import org.dspace.app.mediafilter.FormatFilter;
 import org.dspace.app.mediafilter.factory.MediaFilterServiceFactory;
@@ -54,11 +56,7 @@ import org.dspace.builder.CollectionBuilder;
 import org.dspace.builder.CommunityBuilder;
 import org.dspace.builder.GroupBuilder;
 import org.dspace.builder.ItemBuilder;
-import org.dspace.content.Bitstream;
-import org.dspace.content.Bundle;
-import org.dspace.content.Collection;
-import org.dspace.content.Community;
-import org.dspace.content.Item;
+import org.dspace.content.*;
 import org.dspace.core.Constants;
 import org.dspace.core.SelfNamedPlugin;
 import org.dspace.core.factory.CoreServiceFactory;
@@ -72,9 +70,8 @@ import org.dspace.eperson.factory.EPersonServiceFactory;
 import org.dspace.eperson.service.GroupService;
 import org.dspace.services.ConfigurationService;
 import org.dspace.services.factory.DSpaceServicesFactory;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.dspace.submit.model.AccessConditionOption;
+import org.junit.*;
 
 /**
  * Basic integration testing for the Bulk Access conditions Feature{@link BulkAccessControl}.
@@ -92,12 +89,90 @@ public class BulkAccessControlIT extends AbstractIntegrationTestWithDatabase {
     //suffix (in dspace.cfg) for input formats supported by each filter
     private static final String INPUT_FORMATS_SUFFIX = "inputFormats";
 
+    //name of access condition options that will be used in tests
+    private static final String ITEM_ONLY_ACCESS_CONDITION_OPTION_NAME = "itemOnlyAccessConditionOption";
+    private static final String BITSTREAM_ONLY_ACCESS_CONDITION_OPTION_NAME = "bitstreamOnlyAccessConditionOption";
+
     private Path tempDir;
     private String tempFilePath;
 
     private GroupService groupService = EPersonServiceFactory.getInstance().getGroupService();
     private SearchService searchService = SearchUtils.getSearchService();
     private ConfigurationService configurationService = DSpaceServicesFactory.getInstance().getConfigurationService();
+
+    private static final BulkAccessConditionConfigurationService bulkAccessConditionConfigurationService =
+            DSpaceServicesFactory.getInstance().getServiceManager().getServiceByName(
+                    "bulkAccessConditionConfigurationService", BulkAccessConditionConfigurationService.class
+            );
+    private static final BulkAccessConditionConfiguration bulkAccessConditionConfiguration =
+            bulkAccessConditionConfigurationService.getBulkAccessConditionConfiguration("default");
+
+    private static AccessConditionOption createMockOption(String name) {
+        AccessConditionOption option = new AccessConditionOption();
+        option.setName(name);
+        option.setGroupName("Anonymous");
+        option.setHasEndDate(false);
+        option.setHasStartDate(false);
+        return option;
+    }
+
+    /**
+     * Creates two additional access control options for the tests, one only for item and the other only for bitstreams.
+     * As if configured in the 'access-control.xml'.
+     * */
+    @BeforeClass
+    public static void setUpClass() {
+        AccessConditionOption itemOnlyOption = createMockOption(ITEM_ONLY_ACCESS_CONDITION_OPTION_NAME);
+        List<AccessConditionOption> itemOptions = bulkAccessConditionConfiguration.getItemAccessConditionOptions();
+        itemOptions.add(itemOnlyOption);
+        bulkAccessConditionConfiguration.setItemAccessConditionOptions(itemOptions);
+
+        AccessConditionOption bitstreamOnlyOption = createMockOption(BITSTREAM_ONLY_ACCESS_CONDITION_OPTION_NAME);
+        List<AccessConditionOption> bitstreamOptions = bulkAccessConditionConfiguration.getBitstreamAccessConditionOptions();
+        bitstreamOptions.add(bitstreamOnlyOption);
+        bulkAccessConditionConfiguration.setBitstreamAccessConditionOptions(bitstreamOptions);
+    }
+
+    /**
+     * Removes the access control options created in
+     * {@link org.dspace.app.bulkaccesscontrol.BulkAccessControlIT#setUpClass()}
+     */
+    @AfterClass
+    public static void destroyClass() {
+        AccessConditionOption itemOnlyAccessConditionOption = bulkAccessConditionConfiguration
+                .getItemAccessConditionOptions()
+                .stream()
+                .filter(a -> a.getName().equals(ITEM_ONLY_ACCESS_CONDITION_OPTION_NAME))
+                .findFirst()
+                .orElseThrow(
+                        () -> new IllegalStateException(
+                                String.format(
+                                        "Expected item access condition option %s not found",
+                                        ITEM_ONLY_ACCESS_CONDITION_OPTION_NAME
+                                )
+                        )
+                );
+        List<AccessConditionOption> itemOptions = bulkAccessConditionConfiguration.getItemAccessConditionOptions();
+        itemOptions.remove(itemOnlyAccessConditionOption);
+        bulkAccessConditionConfiguration.setItemAccessConditionOptions(itemOptions);
+
+        AccessConditionOption bitstreamOnlyAccessConditionOption = bulkAccessConditionConfiguration
+                .getBitstreamAccessConditionOptions()
+                .stream()
+                .filter(a -> a.getName().equals(BITSTREAM_ONLY_ACCESS_CONDITION_OPTION_NAME))
+                .findFirst()
+                .orElseThrow(
+                        () -> new IllegalStateException(
+                                String.format(
+                                        "Expected bitstream access condition option %s not found",
+                                        BITSTREAM_ONLY_ACCESS_CONDITION_OPTION_NAME
+                                )
+                        )
+                );
+        List<AccessConditionOption> bitstreamOptions = bulkAccessConditionConfiguration.getBitstreamAccessConditionOptions();
+        bitstreamOptions.remove(bitstreamOnlyAccessConditionOption);
+        bulkAccessConditionConfiguration.setBitstreamAccessConditionOptions(bitstreamOptions);
+    }
 
     @Before
     @Override
@@ -1831,6 +1906,42 @@ public class BulkAccessControlIT extends AbstractIntegrationTestWithDatabase {
         assertThat(testDSpaceRunnableHandler.getWarningMessages(), empty());
     }
 
+    @Test
+    public void performBulkAccessWithBitstreamOnlyAccessConditionForItemTest() throws Exception {
+        runBulkAccessConditionNameTest(
+                Constants.ITEM,
+                "replace",
+                BITSTREAM_ONLY_ACCESS_CONDITION_OPTION_NAME,
+                false);
+    }
+
+    @Test
+    public void performBulkAccessWithItemOnlyAccessConditionForItemTest() throws Exception {
+        runBulkAccessConditionNameTest(
+                Constants.ITEM,
+                "replace",
+                ITEM_ONLY_ACCESS_CONDITION_OPTION_NAME,
+                true);
+    }
+
+    @Test
+    public void performBulkAccessWithItemOnlyAccessConditionForBitstreamTest() throws Exception {
+        runBulkAccessConditionNameTest(
+                Constants.BITSTREAM,
+                "replace",
+                ITEM_ONLY_ACCESS_CONDITION_OPTION_NAME,
+                false);
+    }
+
+    @Test
+    public void performBulkAccessWithBitstreamOnlyAccessConditionForBitstreamTest() throws Exception {
+        runBulkAccessConditionNameTest(
+                Constants.BITSTREAM,
+                "replace",
+                BITSTREAM_ONLY_ACCESS_CONDITION_OPTION_NAME,
+                true);
+    }
+
     private List<Item> findItems(String query) throws SearchServiceException {
 
         DiscoverQuery discoverQuery = new DiscoverQuery();
@@ -1856,5 +1967,80 @@ public class BulkAccessControlIT extends AbstractIntegrationTestWithDatabase {
         File file = new File(tempDir + "/bulk-access.json");
         Path path = Paths.get(file.getAbsolutePath());
         Files.writeString(path, json, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Helper method to run a test on the access condition for item or bitstream.
+     * @param dsoType Either Constants.ITEM or Constants.BITSTREAM.
+     * @param mode Mode of access control replacement.
+     * @param accessConditionName Name of the access condition to be changed in the DSO.
+     * @param expectSuccess If the test should expect either a success or a failure.
+     * @throws Exception
+     */
+    private void runBulkAccessConditionNameTest(int dsoType,
+                                                String mode,
+                                                String accessConditionName,
+                                                boolean expectSuccess) throws Exception {
+        context.turnOffAuthorisationSystem();
+
+        Community community = CommunityBuilder.createCommunity(context)
+                .withName("community")
+                .build();
+
+        Collection collection = CollectionBuilder.createCollection(context, community)
+                .withName("collection")
+                .build();
+
+        String dsoTypeString = null;
+        DSpaceObject dso;
+        Item item = ItemBuilder.createItem(context, collection).build();
+        if (dsoType == Constants.ITEM) {
+            dsoTypeString = "item";
+            dso = item;
+        } else if (dsoType == Constants.BITSTREAM) {
+            dsoTypeString = "bitstream";
+            Bundle bundle = BundleBuilder.createBundle(context, item)
+                    .withName("ORIGINAL")
+                    .build();
+            String bitstreamOneContent = "Dummy content one";
+            try (InputStream is = IOUtils.toInputStream(bitstreamOneContent, CharEncoding.UTF_8)) {
+                dso = BitstreamBuilder.createBitstream(context, bundle, is)
+                        .withName("bitstream one")
+                        .build();
+            }
+        }  else {
+            throw new RuntimeException("Invalid dso type (only ITEM or BITSTREAM are valid): " + dsoType);
+        }
+
+        context.restoreAuthSystemState();
+
+        String json = String.format(
+                "{ \"%s\": {\n" +
+                "      \"mode\": \"%s\",\n" +
+                "      \"accessConditions\": [\n" +
+                "          {\n" +
+                "            \"name\": \"%s\"\n" +
+                "          }\n" +
+                "      ]\n" +
+                "   }}\n",
+                dsoTypeString,
+                mode,
+                accessConditionName);
+
+        buildJsonFile(json);
+
+        String[] args = new String[] {"bulk-access-control", "-u", dso.getID().toString(), "-f", tempFilePath,
+                "-e", admin.getEmail()};
+
+        TestDSpaceRunnableHandler testDSpaceRunnableHandler = new TestDSpaceRunnableHandler();
+        ScriptLauncher.handleScript(args, ScriptLauncher.getConfig(kernelImpl), testDSpaceRunnableHandler, kernelImpl);
+
+        assertThat(testDSpaceRunnableHandler.getErrorMessages(), hasSize(expectSuccess ? 0 : 1));
+        assertThat(testDSpaceRunnableHandler.getWarningMessages(), empty());
+        if (!expectSuccess) {
+            assertThat(testDSpaceRunnableHandler.getErrorMessages(), hasItem(
+                    containsString("wrong access condition <" + accessConditionName + ">")
+            ));
+        }
     }
 }

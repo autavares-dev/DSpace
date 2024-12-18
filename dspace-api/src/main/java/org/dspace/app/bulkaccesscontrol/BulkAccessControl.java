@@ -101,7 +101,7 @@ public class BulkAccessControl extends DSpaceRunnable<BulkAccessControlScriptCon
 
     private Map<String, AccessConditionOption> itemAccessConditions;
 
-    private Map<String, AccessConditionOption> uploadAccessConditions;
+    private Map<String, AccessConditionOption> bitstreamAccessConditions;
 
     private final String ADD_MODE = "add";
 
@@ -135,7 +135,7 @@ public class BulkAccessControl extends DSpaceRunnable<BulkAccessControlScriptCon
             .stream()
             .collect(Collectors.toMap(AccessConditionOption::getName, Function.identity()));
 
-        uploadAccessConditions = bulkAccessConditionConfiguration
+        bitstreamAccessConditions = bulkAccessConditionConfiguration
             .getBitstreamAccessConditionOptions()
             .stream()
             .collect(Collectors.toMap(AccessConditionOption::getName, Function.identity()));
@@ -245,7 +245,7 @@ public class BulkAccessControl extends DSpaceRunnable<BulkAccessControlScriptCon
         }
 
         for (AccessCondition accessCondition : accessConditions) {
-            validateAccessCondition(accessCondition);
+            validateAccessCondition(itemAccessConditions, accessCondition);
         }
     }
 
@@ -280,7 +280,7 @@ public class BulkAccessControl extends DSpaceRunnable<BulkAccessControlScriptCon
         validateConstraint(bitstream);
 
         for (AccessCondition accessCondition : bitstream.getAccessConditions()) {
-            validateAccessCondition(accessCondition);
+            validateAccessCondition(bitstreamAccessConditions, accessCondition);
         }
     }
 
@@ -314,18 +314,19 @@ public class BulkAccessControl extends DSpaceRunnable<BulkAccessControlScriptCon
      * then call {@link AccessConditionOption#validateResourcePolicy(
      * Context, String, Date, Date)} if exception happens so, it's invalid.
      *
+     * @param options map with the valid access condition options, keyed by access condition name
      * @param accessCondition the accessCondition
      * @throws BulkAccessControlException if the accessCondition is invalid
      */
-    private void validateAccessCondition(AccessCondition accessCondition) {
+    private void validateAccessCondition(Map<String, AccessConditionOption> options, AccessCondition accessCondition) {
 
-        if (!itemAccessConditions.containsKey(accessCondition.getName())) {
+        if (!options.containsKey(accessCondition.getName())) {
             handler.logError("wrong access condition <" + accessCondition.getName() + ">");
             throw new BulkAccessControlException("wrong access condition <" + accessCondition.getName() + ">");
         }
 
         try {
-            itemAccessConditions.get(accessCondition.getName()).validateResourcePolicy(
+            options.get(accessCondition.getName()).validateResourcePolicy(
                 context, accessCondition.getName(), accessCondition.getStartDate(), accessCondition.getEndDate());
         } catch (Exception e) {
             handler.logError("invalid access condition, " + e.getMessage());
@@ -576,7 +577,7 @@ public class BulkAccessControl extends DSpaceRunnable<BulkAccessControlScriptCon
         accessControl.getBitstream()
                      .getAccessConditions()
                      .forEach(accessCondition -> createResourcePolicy(bitstream, accessCondition,
-                         uploadAccessConditions.get(accessCondition.getName())));
+                         bitstreamAccessConditions.get(accessCondition.getName())));
 
         itemService.adjustBitstreamPolicies(context, item, item.getOwningCollection(), bitstream);
         mediaFilterService.updatePoliciesOfDerivativeBitstreams(context, item, bitstream);
