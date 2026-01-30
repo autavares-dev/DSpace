@@ -10,16 +10,21 @@ package org.dspace.content.dao.impl;
 import static org.dspace.scripts.Process_.CREATION_TIME;
 
 import java.sql.SQLException;
+
+import java.text.ParseException;
 import java.time.Instant;
+import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import org.apache.commons.lang3.Strings;
+import org.apache.logging.log4j.core.util.CronExpression;
 import org.dspace.content.ProcessStatus;
 import org.dspace.content.dao.ProcessDAO;
 import org.dspace.core.AbstractHibernateDAO;
@@ -28,6 +33,8 @@ import org.dspace.eperson.EPerson;
 import org.dspace.scripts.Process;
 import org.dspace.scripts.ProcessQueryParameterContainer;
 import org.dspace.scripts.Process_;
+import org.dspace.services.factory.DSpaceServicesFactory;
+import org.hibernate.query.Query;
 
 /**
  *
@@ -170,6 +177,62 @@ public class ProcessDAOImpl extends AbstractHibernateDAO<Process> implements Pro
     }
 
     @Override
+    public List<Process> findRunningByInstanceIdOrExpiredHeartbeat(Context context, UUID instanceId)
+        throws SQLException {
+
+        Query<Process> query = getHibernateSession(context).createNativeQuery(
+            """
+               SELECT p.* FROM process AS p
+               WHERE
+                   (
+                       p.instance_id = :instanceId
+                       OR EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - p.last_heartbeat)) > 2 * :seconds
+                   )
+                   AND p.status IN :status
+               """,
+            Process.class
+        );
+
+        // Based on the Process heartbeat update cron, calculates how many seconds have passed between last execution
+        // and the next. Processes with last heartbeats older than this period are considered expired.
+        try {
+            CronExpression cron = new CronExpression(
+                DSpaceServicesFactory.getInstance().getConfigurationService().getProperty(
+                    "process-heartbeat.cron",
+                    "0 */1 * * * ?"
+                )
+            );
+            final var prev = cron.getPrevFireTime(new Date());
+            final var next = cron.getNextValidTimeAfter(new Date());
+            final var mils = next.getTime() - prev.getTime();
+            final var secs = mils / 1000;
+            query.setParameter("seconds", secs);
+        } catch (ParseException e) {
+            // Defaults to 1min.
+            query.setParameter("seconds", 60);
+        }
+
+        query.setParameter("instanceId", instanceId);
+        query.setParameter("status", List.of(ProcessStatus.RUNNING.name(), ProcessStatus.SCHEDULED.name()));
+        return query.getResultList();
+    }
+
+    @Override
+    public void updateProcessesHeartbeat(Context context, UUID instanceId) throws SQLException {
+        Query<Void> query = getHibernateSession(context).createNativeQuery(
+            """
+            UPDATE process AS p
+            SET p.last_heartbeat = CURRENT_TIMESTAMP
+            WHERE p.instance_id = :instance_id AND p.status IN :status
+            """,
+            Void.class
+        );
+        query.setParameter("instanceId", instanceId);
+        query.setParameter("status", List.of(ProcessStatus.RUNNING.name(), ProcessStatus.SCHEDULED.name()));
+        query.executeUpdate();
+    }
+
+    @Override
     public List<Process> findByUser(Context context, EPerson user, int limit, int offset) throws SQLException {
         CriteriaBuilder criteriaBuilder = getCriteriaBuilder(context);
         CriteriaQuery<Process> criteriaQuery = getCriteriaQuery(criteriaBuilder, Process.class);
@@ -197,5 +260,3 @@ public class ProcessDAOImpl extends AbstractHibernateDAO<Process> implements Pro
     }
 
 }
-
-

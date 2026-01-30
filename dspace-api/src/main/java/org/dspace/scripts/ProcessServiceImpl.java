@@ -13,6 +13,9 @@ import java.io.FileInputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
@@ -23,7 +26,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.io.FileUtils;
@@ -48,6 +53,7 @@ import org.dspace.eperson.EPerson;
 import org.dspace.eperson.Group;
 import org.dspace.scripts.service.ProcessService;
 import org.dspace.services.ConfigurationService;
+import org.dspace.services.factory.DSpaceServicesFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
@@ -85,6 +91,8 @@ public class ProcessServiceImpl implements ProcessService {
         process.setName(scriptName);
         process.setParameters(DSpaceCommandLineParameter.concatenate(parameters));
         process.setCreationTime(Instant.now());
+        process.setLastHeartbeat(process.getCreationTime());
+        process.setInstanceId(getOrGenerateInstanceId());
         Optional.ofNullable(specialGroups)
             .ifPresent(sg -> {
                 // we use a set to be sure no duplicated special groups are stored with process
@@ -328,23 +336,47 @@ public class ProcessServiceImpl implements ProcessService {
     }
 
     @Override
+    public List<Process> findRunningByInstanceIdOrExpiredHeartbeat(Context context) throws SQLException {
+        return this.processDAO.findRunningByInstanceIdOrExpiredHeartbeat(context, getOrGenerateInstanceId());
+    }
+
+    @Override
+    public void updateProcessesHeartbeat(Context context) throws SQLException {
+        this.processDAO.updateProcessesHeartbeat(context, getOrGenerateInstanceId());
+    }
+
+    @Override
     public int countByUser(Context context, EPerson user) throws SQLException {
         return processDAO.countByUser(context, user);
     }
 
     @Override
     public void failRunningProcesses(Context context) throws SQLException, IOException, AuthorizeException {
-        List<Process> processesToBeFailed = findByStatusAndCreationTimeOlderThan(
-                context, List.of(ProcessStatus.RUNNING, ProcessStatus.SCHEDULED), Instant.now());
+
+        List<Process> processesToBeFailed = findRunningByInstanceIdOrExpiredHeartbeat(context);
+
         for (Process process : processesToBeFailed) {
             context.setCurrentUser(process.getEPerson());
             // Fail the process.
-            log.info("Process with ID {} did not complete before tomcat shutdown, failing it now.", process.getID());
+            UUID currentInstanceId = getOrGenerateInstanceId();
+
+            String message = String.format(
+                """
+                Process with ID %s (created in instance '%s') did not complete before tomcat shutdown.
+                Failing it now from %s.
+                """,
+                process.getID(),
+                process.getInstanceId(),
+                currentInstanceId.equals(process.getInstanceId())
+                    ? "the same instance '" + currentInstanceId + "' (instance restarted)"
+                    : "another instance '" + currentInstanceId + "' (expired heartbeat)"
+            );
+
+            log.info(message);
+
             fail(context, process);
             // But still attach its log to the process.
-            appendLog(process.getID(), process.getName(),
-                      "Process did not complete before tomcat shutdown.",
-                      ProcessLogLevel.ERROR);
+            appendLog(process.getID(), process.getName(), message, ProcessLogLevel.ERROR);
             createLogBitstream(context, process);
         }
     }
@@ -373,5 +405,54 @@ public class ProcessServiceImpl implements ProcessService {
             }
         }
         return logsDir;
+    }
+
+    /**
+     * Gets, or creates if not exists, the folder that stores the file that identifies the instance.
+     * @return Path to the foder containing the instance file.
+     * @throws IOException If something goes wrong
+     */
+    private Path getOrCreateInstanceIdFolder() throws IOException {
+        Path instanceFolder = Paths.get(
+            DSpaceServicesFactory.getInstance().getConfigurationService().getProperty("dspace.dir") + "/instance"
+        );
+        if (!Files.exists(instanceFolder)) {
+            Files.createDirectories(instanceFolder);
+        } else if (!Files.isDirectory(instanceFolder)) {
+            // Não deveria ocorrer.
+            throw new RuntimeException();
+        }
+        return instanceFolder;
+    }
+
+    /**
+     * Get, or creates if not exists, the UUID that identifies the currently running instance. This UUID is stored
+     * in '[dspace.dir]/instance/[uuid]'.
+     * @return
+     */
+    private UUID getOrGenerateInstanceId() {
+        UUID instanceId = null;
+        try {
+            Path instanceFolder = getOrCreateInstanceIdFolder();
+
+            // Gets UUID from file if exists, or creates a new one
+            try (Stream<Path> filesStream = Files.walk(instanceFolder).filter(Files::isRegularFile)) {
+                List<Path> instanceFiles = filesStream.toList();
+                if (instanceFiles.isEmpty()) {
+                    // No file exists yet, creates a new UUID and a file named by it
+                    instanceId = UUID.randomUUID();
+                    Path instanceFile = instanceFolder.resolve(instanceId.toString());
+                    Files.createFile(instanceFile);
+                } else if (instanceFiles.size() == 1) {
+                    // If file exists, should be named as a valid UUID
+                    instanceId = UUID.fromString(instanceFiles.get(0).getFileName().toString());
+                } else {
+                    // Should not occur
+                    throw new IOException("Found more than one instance id file");
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return instanceId;
     }
 }

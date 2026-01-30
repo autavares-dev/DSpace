@@ -10,6 +10,7 @@ package org.dspace.content.dao;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 import org.dspace.content.ProcessStatus;
 import org.dspace.core.Context;
@@ -97,6 +98,24 @@ public interface ProcessDAO extends GenericDAO<Process> {
      */
     List<Process> findByStatusAndCreationTimeOlderThan(Context context, List<ProcessStatus> statuses, Instant date)
         throws SQLException;
+
+    /**
+     * Find the processes with RUNNING or SCHEDULED status, from the specified instance or from any other instance but
+     * with expired heartbeat.
+     * @param context The relevant DSpace context
+     * @param instanceId UUID of the instance to retrieve processes
+     * @return The list of all Processes from the instance or with expired heartbeat
+     * @throws SQLException If something goes wrong
+     */
+    List<Process> findRunningByInstanceIdOrExpiredHeartbeat(Context context, UUID instanceId) throws SQLException;
+
+    /**
+     * Updates the heartbeat of all RUNNING and SCHEDULED Processes of the specified instance.
+     * @param context The relevant DSpace context
+     * @param instanceId UUID of the instance to update processes heartbeats
+     * @throws SQLException If something goes wrong
+     */
+    void updateProcessesHeartbeat(Context context, UUID instanceId) throws SQLException;
 
     /**
      * Returns a list of all Process objects in the database by the given user.

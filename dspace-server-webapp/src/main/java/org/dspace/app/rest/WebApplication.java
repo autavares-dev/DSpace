@@ -17,6 +17,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.servlet.Filter;
 import org.dspace.app.ldn.LDNQueueExtractor;
 import org.dspace.app.ldn.LDNQueueTimeoutChecker;
+import org.dspace.app.process.ProcessHeartbeatUpdater;
 import org.dspace.app.rest.filter.DSpaceRequestContextFilter;
 import org.dspace.app.rest.model.hateoas.DSpaceLinkRelationProvider;
 import org.dspace.app.rest.parameter.resolver.SearchFilterResolver;
@@ -91,6 +92,11 @@ public class WebApplication {
     @Scheduled(cron = "${google.analytics.cron:-}")
     public void sendGoogleAnalyticsEvents() {
         googleAsyncEventListener.sendCollectedEvents();
+    }
+
+    @Scheduled(cron = "${process-heartbeat.cron:-}")
+    public void processHeartbeat() {
+        ProcessHeartbeatUpdater.updateProcessesHeartbeats();
     }
 
     /**

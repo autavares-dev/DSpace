@@ -257,6 +257,21 @@ public interface ProcessService {
         throws SQLException;
 
     /**
+     * Find the processes with RUNNING or SCHEDULED status, from this currently running instance or from any other
+     * instance but with expired heartbeat.
+     * @param context The relevant DSpace context
+     * @throws SQLException If something goes wrong
+     */
+    List<Process> findRunningByInstanceIdOrExpiredHeartbeat(Context context) throws SQLException;
+
+    /**
+     * Updates the heartbeat of all RUNNING and SCHEDULED Processes of the currently running instance.
+     * @param context The relevant DSpace context
+     * @throws SQLException If something goes wrong
+     */
+    public void updateProcessesHeartbeat(Context context) throws SQLException;
+
+    /**
      * Returns a list of all Process objects in the database by the given user.
      *
      * @param context The relevant DSpace context

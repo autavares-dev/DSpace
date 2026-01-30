@@ -10,6 +10,7 @@ package org.dspace.scripts;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -34,6 +35,7 @@ import org.dspace.core.ReloadableEntity;
 import org.dspace.eperson.EPerson;
 import org.dspace.eperson.Group;
 import org.hibernate.Length;
+import org.hibernate.annotations.CreationTimestamp;
 
 /**
  * This class is the DB Entity representation of the Process object to be stored in the Database
@@ -89,6 +91,12 @@ public class Process implements ReloadableEntity<Integer> {
 
     @Column(name = "creation_time", nullable = false)
     private Instant creationTime;
+
+    @Column(name = "last_heartbeat")
+    private Instant lastHeartbeat;
+
+    @Column(name = "instance_id")
+    private UUID instanceId;
 
     public static final String BITSTREAM_TYPE_METADATAFIELD = "dspace.process.filetype";
     public static final String OUTPUT_TYPE = "script_output";
@@ -235,6 +243,22 @@ public class Process implements ReloadableEntity<Integer> {
         this.groups = groups;
     }
 
+    public UUID getInstanceId() {
+        return instanceId;
+    }
+
+    public void setInstanceId(UUID instanceId) {
+        this.instanceId = instanceId;
+    }
+
+    public Instant getLastHeartbeat() {
+        return lastHeartbeat;
+    }
+
+    public void setLastHeartbeat(Instant lastHeartbeat) {
+        this.lastHeartbeat = lastHeartbeat;
+    }
+
     /**
      * Return <code>true</code> if <code>other</code> is the same Process
      * as this object, <code>false</code> otherwise
@@ -255,6 +279,7 @@ public class Process implements ReloadableEntity<Integer> {
                                .append(this.getParameters(), ((Process) other).getParameters())
                                .append(this.getCreationTime(), ((Process) other).getCreationTime())
                                .append(this.getEPerson(), ((Process) other).getEPerson())
+                               .append(this.getInstanceId(), ((Process) other).getInstanceId())
                                .isEquals());
     }
 
@@ -270,6 +295,7 @@ public class Process implements ReloadableEntity<Integer> {
             .append(this.getParameters())
             .append(this.getCreationTime())
             .append(this.getEPerson())
+            .append(this.getInstanceId())
             .toHashCode();
     }
 }
